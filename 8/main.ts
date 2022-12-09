@@ -74,7 +74,6 @@ function getScenicScore(x: number, y: number): number {
       upScore = 0,
       rightScore = 0;
 
-  console.log(`x=${x}, y=${y}`);
   // Look left...
   for (let i = x - 1; i >= 0; --i) {
     leftScore++;
@@ -100,8 +99,6 @@ function getScenicScore(x: number, y: number): number {
   }
 
   // Turn the world magenta
-
-  console.dir([x, y, leftScore, downScore, upScore, rightScore]);
 
   return leftScore * downScore * upScore * rightScore;
 }
