@@ -43,14 +43,10 @@ async function loadGrid(filename: string): Promise<Grid> {
       };
 
       const ch = line.charAt(cur.x);
-      if (ch === 'S') {
-        start = loc;
-      } else if (ch === 'E') {
-        loc.height = 25;
-        end = loc;
-      } else {
-        loc.height = (ch.charCodeAt(0) - 'a'.charCodeAt(0));
-      }
+      if (ch === 'S') { start = loc; }
+      else if (ch === 'E') { loc.height = 25; end = loc; }
+      else { loc.height = (ch.charCodeAt(0) - 'a'.charCodeAt(0)); }
+
       row.push(loc);
     }
     locs.push(row);
@@ -81,16 +77,19 @@ let shortestPathLength = Infinity;
 let shortestPathToEnd: PathNode;
 
 /**
- * loc is where we are visiting.
- * Updates n with up to 4 paths to follow.
+ * n is the node where we are visiting.
+ * If an adjacent node has not been visited, and followFn() returns true,
+ * then that node will be added as a possible path to follow.
+ * If endFn() returns true, it means the goal has been reached.
  */
-function branchPath(n: PathNode, start: Loc, end: Loc) {
+function branchPath(n: PathNode,
+    followFn: (from: Loc, to: Loc) => boolean,
+    endFn: (loc: Loc) => boolean) {
   n.loc.visited = true;
-  if (n.loc === end) {
+  if (endFn(n.loc)) {
     let pathLength = 0;
     let cur = n;
-    while (cur.loc !== start) {
-      if (!cur.prev) { throw `No prev!`; }
+    while (cur.prev) {
       cur = cur.prev;
       ++pathLength;
     }
@@ -103,7 +102,7 @@ function branchPath(n: PathNode, start: Loc, end: Loc) {
 
   for (const dir of [n.loc.north, n.loc.east, n.loc.south, n.loc.west]) {
     if (!dir) continue;
-    if (dir.visited !== true && (n.loc.height >= dir.height - 1)) {
+    if (dir.visited !== true && followFn(n.loc, dir)) {
       dir.visited = true;
       n.next.push({
         loc: dir,
@@ -114,31 +113,11 @@ function branchPath(n: PathNode, start: Loc, end: Loc) {
   }
 }
 
-function dumpPath(n: PathNode, start: Loc) {
-  const locs: Loc[] = [];
-  let cur = n;
-  while (cur.loc !== start) {
-    locs.push(cur.loc);
-    if (!cur.prev) throw `Once again, no prev!`;
-    cur = cur.prev;
-  }
-  locs.push(start);
-
-  let pathStr = '';
-  for (let i = locs.length - 1; i >= 0; --i) {
-    if (i < locs.length - 1) {
-      pathStr += ` -> `;
-    }
-    pathStr += `(${locs[i].coord.x},${locs[i].coord.y})`;
-  }
-  console.log(pathStr);
-}
-
 async function main1(filename: string) {
   const grid = await loadGrid(filename);
 
   const head: PathNode = {
-    loc: grid.start,
+    loc: grid.end,
     prev: null,
     next: [],
   }
@@ -147,7 +126,9 @@ async function main1(filename: string) {
   while (pathsToFollow.length > 0) {
     const path = pathsToFollow.shift();
     if (!path) throw `huh?`;
-    branchPath(path, grid.start, grid.end);
+    branchPath(path,
+      (from: Loc, to: Loc) => (from.height - 1 <= to.height),
+      (loc: Loc) => loc === grid.start);
     if (path.next.length > 0) {
       pathsToFollow.push(...path.next);
     }
@@ -157,4 +138,30 @@ async function main1(filename: string) {
   console.log(shortestPathLength);
 }
 
-main1('input.txt');
+async function main2(filename: string) {
+  const grid = await loadGrid(filename);
+
+  const head: PathNode = {
+    loc: grid.end,
+    prev: null,
+    next: [],
+  }
+
+  const pathsToFollow: PathNode[] = [ head ];
+  while (pathsToFollow.length > 0) {
+    const path = pathsToFollow.shift();
+    if (!path) throw `huh?`;
+    branchPath(path,
+      (from: Loc, to: Loc) => (from.height - 1 <= to.height),
+      (loc: Loc) => loc.height === 0);
+    if (path.next.length > 0) {
+      pathsToFollow.push(...path.next);
+    }
+    if (pathsToFollow.length > 100) break;
+  }
+
+  console.log(shortestPathLength);
+}
+
+// main1('input.txt');
+main2('input.txt');
