@@ -14,19 +14,6 @@ const FLOOR = 4;
 
 type Terrain = number;
 
-/**
- * TODO:
- * - finding a repeating sequence should be easier by using
- *   indexOf(). If the index of a long-enough sequence always repeats over the
- *   exact same # of rows, then it's some simple math to figure out how the
- *   height changes over extremely large #s of blocks.
- * - note that the input is very large (10092 characters) which means to find
- *   a repeating sequence will require a large # of blocks to be processed.
- *   Each block will consume at least 3 "jet" symbols so this is at least
- *   10092 / 3 = 3364 blocks that need to drop before a repeating sequence can
- *   start to be searched for.
- */
-
 interface Block {
   /** The y-coordinate of the bottom-most squares. */
   bottomY: number;
@@ -100,15 +87,23 @@ const GROW_SIZE = 4096;
 class Board {
   /**
    * Lower 7-bits are populated when stone is present. First byte is the lowest
-   * row in the tower (bottom). Lowest bit is the left-most position on the row.
+   * row in the tower (bottom), so the falling blocks are 1-based indexing. The
+   * lowest bit is the left-most position on the row.
    */
   tower: Uint8Array = new Uint8Array(INITIAL_SIZE);
+
+  /**
+   * Represents the gain in maxY once the nth block has landed on the tower.
+   */
+  growth: Uint8Array = new Uint8Array(INITIAL_SIZE);
 
   /** The y of the highest block on the Board. */
   maxY: number = 0;
 
   nextBlockIndex: number = 0;
   currentBlock: Block;
+  /** The # of blocks that have landed. */
+  numBlocks: number = 0;
 
   constructor(public width: number) {
     this.startNewBlock();
@@ -121,7 +116,12 @@ class Board {
       const newArr = new Uint8Array(newBuf);
       newArr.set(this.tower);
       this.tower = newArr;
-      console.log(`Tower array now size ${this.tower.length} with first byte = ${this.tower[0]}`)
+    }
+    while (this.maxY + n > this.growth.length) {
+      const newBuf = new ArrayBuffer(this.growth.length + GROW_SIZE);
+      const newArr = new Uint8Array(newBuf);
+      newArr.set(this.growth);
+      this.growth = newArr;
     }
   }
 
@@ -187,6 +187,7 @@ class Board {
   }
 
   startNewBlock() {
+    const oldMaxY = this.maxY;
     // If the current block exists, then update the grid (turn falling stone
     // into stone).
     if (this.currentBlock) {
@@ -216,7 +217,8 @@ class Board {
     this.currentBlock = BLOCKS[this.nextBlockIndex];
     this.currentBlock.bottomY = this.maxY + 4;
     this.currentBlock.leftX = 3; // 0 is the wall, starts two blocks in from that.
-
+    this.growth[this.numBlocks] = (this.maxY - oldMaxY);
+    this.numBlocks++;
     let newTop = this.currentBlock.bottomY + this.currentBlock.terrain.length;
     if (newTop > this.tower.length) {
       this.addRows(newTop - this.tower.length);
@@ -230,11 +232,18 @@ const BOARD_WIDTH = 7;
 let board: Board;
 
 function printBoard() {
-  console.log('----------------');
+  console.log('================');
   for (const s of board.print()) {
     console.log(s);
   }
   console.log(`currentBlock: ${board.currentBlock.leftX}, ${board.currentBlock.bottomY}`);
+}
+
+function printGrowth() {
+  console.log('----------------');
+  for (let h = 0; h < board.numBlocks + 10; ++h) {
+    console.log(board.growth[h]);
+  }
 }
 
 async function waitForEnterThenClear() {
@@ -245,7 +254,7 @@ async function waitForEnterThenClear() {
 
 function initializeBoard() {
   board = new Board(BOARD_WIDTH);
-  printBoard();
+  // printBoard();
 }
 
 async function main1(filename: string) {
@@ -260,7 +269,7 @@ async function main1(filename: string) {
     jetPattern = line;
   }
 
-  let numBlocksToFall = 2022; //1000000000000;
+  let numBlocksToFall = 2022;
   let curBlockNum = 1;
   let patternPos = 0;
   while (curBlockNum <= numBlocksToFall) {
@@ -278,9 +287,6 @@ async function main1(filename: string) {
       throw `bad juju: ${ch}`;
     }
 
-    // printBoard();
-    // await waitForEnterThenClear();
-
     if (!board.moveCurrentBlock(0, -1)) {
       board.startNewBlock();
       curBlockNum++;
@@ -288,20 +294,153 @@ async function main1(filename: string) {
         console.log(`Doing ${curBlockNum}th block`);
       }  
     }
-
-    // printBoard();
-    // console.log(`current block num = ${curBlockNum}, maxY = ${board.maxY}`);
-    // await waitForEnterThenClear();
   }
   printBoard();
 
   console.log(`Tower height = ${board.maxY}`);
 }
 
-// tiny.txt produces a block pattern that repeats every 53 rows.
-// input.txt produces a pattern of blocks that repeats every 2785 lines.
-async function main2() {
-
+function arrayIndexOf(arr: Uint8Array, subArr: Uint8Array, fromIndex: number): number {
+  let found: boolean;
+  const maxLen = arr.length - subArr.length + 1;
+  // Loop from the from index to the end of possible sub-string matches.
+  for (let i = fromIndex; i < maxLen; ++i) {
+    found = true;
+    // Now loop for the sub-array and check if we find it.
+    for (let j = 0; j < subArr.length; ++j) {
+      // On first non-match, break so we can increment i.
+      if (arr[i + j] !== subArr[j]) {
+        found = false;
+        break;
+      }
+    }
+    if (found) {
+      return i;
+    }
+  }
+  // If we get here, then found was never true - return -1.
+  return -1;
 }
 
-main1('tiny.txt');
+function findAllSubArrayMatches(arr: Uint8Array, subArr: Uint8Array): number[] {
+  const matchIndices: number[] = [];
+  const L = subArr.length;
+  let index = L;
+  while (index < arr.length - L) {
+    const matchIndex = arrayIndexOf(arr, subArr, index);
+    if (matchIndex === -1) {
+      break;
+    }
+    matchIndices.push(matchIndex);
+    index = matchIndex + L;
+  }
+
+  return matchIndices;
+}
+
+// tiny.txt produces a block pattern that repeats every 53 rows.
+// input.txt produces a pattern of blocks that repeats every 2785 lines.
+async function main2(filename: string) {
+  initializeBoard();
+
+  let jetPattern = '';
+  const lines: string[] = (await Deno.readTextFile(filename)).split(/\r?\n/);
+  for (const line of lines) {
+    if (line.length === 0) continue;
+    jetPattern = line;
+  }
+
+  // Choose a large enough number that we capture the pattern repeating several
+  // times (see below).
+  let numBlocksToFall = 150000; // 2022; //1000000000000;
+  let curBlockNum = 1;
+  let patternPos = 0;
+  while (curBlockNum <= numBlocksToFall) {
+    const ch = jetPattern.charAt(patternPos);
+    patternPos++;
+    if (patternPos >= jetPattern.length) {
+      patternPos = 0;
+    }
+
+    if (ch === '>') {
+      board.moveCurrentBlock(1, 0);
+    } else if (ch === '<') {
+      board.moveCurrentBlock(-1, 0);
+    } else {
+      throw `bad juju: ${ch}`;
+    }
+
+    if (!board.moveCurrentBlock(0, -1)) {
+      board.startNewBlock();
+      curBlockNum++;
+    }
+  }
+
+  // The only way I could figure this being solved is to notice a pattern in the
+  // output and then do some math. The pattern of blocks landing does repeat,
+  // which means the pattern of how much the tower grows also repeats.
+  // The goal is to find the start of a series of numbers that repeat
+  // consistently with a delta that is a multiple of the number of blocks (5).
+
+  // A sequence of 20 numbers long should be enough to guard against random
+  // matches and not too long to lap the period of repetition.
+  let sequenceLength = BLOCKS.length * 4;
+  let testSequence = board.growth.subarray(0, sequenceLength);
+
+  let found = false;
+  let ind = 0;
+  let matchIndices: number[] = [];
+  while (!found) {
+    testSequence = board.growth.subarray(ind, sequenceLength)
+    matchIndices = findAllSubArrayMatches(board.growth, testSequence);
+    if (matchIndices.length > 4) {
+      found = true;
+    } else {
+      ind++;
+    }
+  }
+
+  // Loop in reverse order and compare the delta between indices. If they are
+  // all equal except for the first one, and the delta is a multiple of 5, then 
+  // we found our first index. In fact, we know (by running the code and testing)
+  // that this value is 1745).
+  let deltas: number[] = [];
+  for (let j = matchIndices.length - 1; j >= 1; --j) {
+    const delta = matchIndices[j] - matchIndices[j - 1];
+    deltas.push(delta);
+  }
+
+  deltas = deltas.filter(d => d === deltas[0]);
+  if (deltas.length < 2) throw `something went very wrong`;
+  const theDelta = deltas[0];
+
+  const firstIndex = matchIndices[1];
+
+  // Now sum up all the height gains to the first index.
+  let initialSum = 0;
+  for (let k = 0; k < firstIndex; ++k) {
+    initialSum += board.growth[k];
+  }
+
+  // Now we find out how much each sequence of 1745 adds.
+  let repeatingSum = 0;
+  for (let k = firstIndex; k < firstIndex + theDelta; ++k) {
+    repeatingSum += board.growth[k];
+  }
+
+  // Now we know that the height is initialSum + (m * repeatingSum) + anyRemainder.
+
+  // I had an off-by-1 error here :(
+  let N = 1000000000000 - firstIndex + 1;
+  let totalSum = initialSum;
+  const M = Math.floor(N / theDelta);
+  const remainder = N - M * theDelta;
+  totalSum += M * repeatingSum;
+  for (let n = firstIndex; n < firstIndex + remainder; ++n) {
+    totalSum += board.growth[n];    
+  }
+  console.log(totalSum);
+}
+
+// main1('input.txt');
+main2('input.txt');
