@@ -5,7 +5,6 @@ async function clearTerm() {
   });
   await p.status();
 }
-clearTerm();
 
 const AIR = 0;
 const STONE = 1;
@@ -17,28 +16,15 @@ type Terrain = number;
 
 /**
  * TODO:
- * - we have the problem of the cheap-o solution I used to copy the entire
- *   array on every block move. Instead, it might be easier to not copy, but
- *   only mutate the array in-place (with careful undo semantics if a collision
- *   occurs).
- * - another thing to consider is how the board is stored. Currently each row in
- *   the board stores 9 characters, which is (I think) 18 bytes per row on the
- *   board even though the walls are static and the only interesting thing is
- *   whether those 7 inner spaces are air or stone.
- * - change how the Board is stored, either:
- *   - modelled as a string (with each ASCII character representing a single row
- *     on the board). This means re-creating the string every time a row changes
- *     state, which could get very expensive with very tall boards
- *   OR
- *   - modelled as an array (with each row representing 8-bits). This means you
- *     could pack a number of rows into a single value in the array. If we
- *     choose 5 (the number of types of blocks), then every 5 rows is
- *     represented by a single #. Arrays being mutable make this particularly
- *     easy to update and extend.
- * - in either case, finding a repeating sequence should be easier by using
+ * - finding a repeating sequence should be easier by using
  *   indexOf(). If the index of a long-enough sequence always repeats over the
  *   exact same # of rows, then it's some simple math to figure out how the
  *   height changes over extremely large #s of blocks.
+ * - note that the input is very large (10092 characters) which means to find
+ *   a repeating sequence will require a large # of blocks to be processed.
+ *   Each block will consume at least 3 "jet" symbols so this is at least
+ *   10092 / 3 = 3364 blocks that need to drop before a repeating sequence can
+ *   start to be searched for.
  */
 
 interface Block {
@@ -108,93 +94,92 @@ const BLOCKS: Block[] = [
   },
 ];
 
+const INITIAL_SIZE = 4096;
+const GROW_SIZE = 4096;
+
 class Board {
-  grid: Terrain[][] = [];
+  /**
+   * Lower 7-bits are populated when stone is present. First byte is the lowest
+   * row in the tower (bottom). Lowest bit is the left-most position on the row.
+   */
+  tower: Uint8Array = new Uint8Array(INITIAL_SIZE);
 
   /** The y of the highest block on the Board. */
   maxY: number = 0;
-
-  /** The y of the lowest block on the Board. */
-  floorY: number = 0;
 
   nextBlockIndex: number = 0;
   currentBlock: Block;
 
   constructor(public width: number) {
-    this.grid.push(new Array<Terrain>(this.width + 2).fill(FLOOR));
     this.startNewBlock();
   }
 
   addRows(n: number) {
     if (n <= 0) throw `Bad n=${n}`;
-    const newRow = new Array<Terrain>(this.width + 2).fill(AIR);
-    newRow[0] = WALL;
-    newRow[this.width + 1] = WALL;
-    while (n > 0) {
-      this.grid.push([...newRow]);
-      n--;
+    while (this.maxY + n > this.tower.length) {
+      const newBuf = new ArrayBuffer(this.tower.length + GROW_SIZE);
+      const newArr = new Uint8Array(newBuf);
+      newArr.set(this.tower);
+      this.tower = newArr;
+      console.log(`Tower array now size ${this.tower.length} with first byte = ${this.tower[0]}`)
     }
   }
 
   /** Returns true if the block moved successfully. */
   moveCurrentBlock(dx: number, dy: number): boolean {
     // Try to move the block in the proposed direction.
-    const newGrid = structuredClone(this.grid);
     for (let by = 0; by < this.currentBlock.terrain.length; ++by) {
+      let bitPos = this.currentBlock.leftX - 1 + dx;
       for (let bx = 0; bx < this.currentBlock.terrain[by].length; ++bx) {
         let y = by + this.currentBlock.bottomY;
         let x = bx + this.currentBlock.leftX;
 
-        // Remove block first so it doesn't interfere with itself.
-        if (this.currentBlock.terrain[by][bx] !== AIR) {
-          newGrid[y][x] = AIR;
-        }
-      }
-    }
-
-    for (let by = 0; by < this.currentBlock.terrain.length; ++by) {
-      for (let bx = 0; bx < this.currentBlock.terrain[by].length; ++bx) {
-        let y = by + this.currentBlock.bottomY;
-        let x = bx + this.currentBlock.leftX;
-        // Something blocks your way... abandon everything...
+        if (x + dx < 1 || x + dx > this.width) return false;
+        if (y + dy < 1) return false;
         if (this.currentBlock.terrain[by][bx] !== AIR &&
-            newGrid[y + dy][x + dx] !== AIR) {
+            this.tower[y+dy] & (2 ** bitPos)) {
           return false;
         }
-        if (this.currentBlock.terrain[by][bx] !== AIR) {
-          newGrid[y + dy][x + dx] = this.currentBlock.terrain[by][bx];
-        }
+        bitPos++;
       }
     }
 
-    this.grid = newGrid;
     this.currentBlock.bottomY += dy;
     this.currentBlock.leftX += dx;
 
-    // const CHOP = 100;
-    // if (this.grid.length > CHOP) {
-    //   const linesChopped = this.grid.length - CHOP;
-    //   this.grid = this.grid.slice(-CHOP);
-    //   this.currentBlock.bottomY -= linesChopped;
-    //   this.maxY -= linesChopped;
-    //   this.floorY += linesChopped;
-    // }
     return true;
   }
 
   print(): string[] {
     const strs: string[] = [];
-    for (let y = 0; y <  this.grid.length; ++y) {
-      let rowStr = '';
-      for (let x = 0; x < this.width + 2; ++x) {
-        switch (this.grid[y][x]) {
-          case AIR           : rowStr += '.'; break;
-          case STONE         : rowStr += '#'; break;
-          case FALLING_STONE : rowStr += '@'; break;
-          case FLOOR         : rowStr += '-'; break;
-          case WALL          : rowStr += '|'; break;
+    strs.push('-'.repeat(this.width + 2));
+
+    // Start y at 1 because 0 is the floor in the old board and bottomY is set based on this.
+    for (let y = 1; y <= this.maxY + this.currentBlock.terrain.length + 3; ++y) {
+      let rowStr = '|';
+      let bitPos = 0;
+      for (let x = 0; x < this.width; ++x) {
+        if (y >= this.currentBlock.bottomY &&
+            y < this.currentBlock.bottomY + this.currentBlock.terrain.length &&
+            x >= this.currentBlock.leftX - 1 &&
+            x < this.currentBlock.leftX - 1 + this.currentBlock.terrain[0].length) {
+          let bx = x - (this.currentBlock.leftX - 1);
+          let by = y - (this.currentBlock.bottomY);
+          if (this.currentBlock.terrain[by][bx] === FALLING_STONE) {
+            rowStr += '@';
+          } else {
+            rowStr += '.';
+          }
+        } else {
+          if (this.tower[y] & (2 ** bitPos)) {
+            rowStr += '#';
+          } else {
+            rowStr += '.';
+          }
         }
+        bitPos++;
       }
+      rowStr += '|';
       strs.push(rowStr);
     }
 
@@ -206,57 +191,38 @@ class Board {
     // into stone).
     if (this.currentBlock) {
       for (let by = 0; by < this.currentBlock.terrain.length; ++by) {
+        let bitPos = this.currentBlock.leftX - 1;
+        let y = by + this.currentBlock.bottomY;
+        let towerNum = this.tower[y];
         for (let bx = 0; bx < this.currentBlock.terrain[by].length; ++bx) {
-          // console.log(`bottomY = ${this.currentBlock.bottomY}`);
-          let y = by + this.currentBlock.bottomY;
           let x = bx + this.currentBlock.leftX;
           if (this.currentBlock.terrain[by][bx] !== AIR) {
-            this.grid[y][x] = STONE;
+            towerNum += 2 ** bitPos;
           }
+          ++bitPos;
         }
+        this.tower[y] = towerNum;
       }
       // Set new maxY.
-      let foundMaxY = false;
-      for (let y = this.grid.length - 1; y >= 0; --y) {
-        for (let x = 1; x < this.grid[y].length - 1; ++x) {
-          if (this.grid[y][x] === STONE) {
-            this.maxY = y;
-            foundMaxY = true;
-            break;
-          }
+      for (let y = Math.max(1, this.maxY); y < this.tower.length; ++y) {
+        if (this.tower[y] === 0) {
+          break;
         }
-        if (foundMaxY) break;
+        this.maxY = y;
       }
     }
 
     // Set and position the new block...
-    // console.log(`maxY is ${this.maxY}`);
     this.currentBlock = BLOCKS[this.nextBlockIndex];
     this.currentBlock.bottomY = this.maxY + 4;
     this.currentBlock.leftX = 3; // 0 is the wall, starts two blocks in from that.
-    // console.log(`newBlock is ${JSON.stringify(this.currentBlock)}`);
 
     let newTop = this.currentBlock.bottomY + this.currentBlock.terrain.length;
-    // console.log(`newTop = ${newTop}`);
-    // console.log(`grid length = ${this.grid.length}`);
-    if (newTop > this.grid.length) {
-      // console.log(`Added ${newTop - this.grid.length} new rows`);
-      this.addRows(newTop - this.grid.length);
+    if (newTop > this.tower.length) {
+      this.addRows(newTop - this.tower.length);
     }
     this.nextBlockIndex++;
     if (this.nextBlockIndex >= BLOCKS.length) this.nextBlockIndex = 0;
-
-    // Update grid. It is safe to do because of the positioning rules.
-    for (let by = 0; by < this.currentBlock.terrain.length; ++by) {
-      for (let bx = 0; bx < this.currentBlock.terrain[by].length; ++bx) {
-        let y = by + this.currentBlock.bottomY;
-        let x = bx + this.currentBlock.leftX;
-
-        if (this.currentBlock.terrain[by][bx] !== AIR) {
-          this.grid[y][x] = this.currentBlock.terrain[by][bx];
-        }
-      }
-    }
   }  
 }
 
@@ -268,6 +234,7 @@ function printBoard() {
   for (const s of board.print()) {
     console.log(s);
   }
+  console.log(`currentBlock: ${board.currentBlock.leftX}, ${board.currentBlock.bottomY}`);
 }
 
 async function waitForEnterThenClear() {
@@ -282,7 +249,9 @@ function initializeBoard() {
 }
 
 async function main1(filename: string) {
+  await clearTerm();
   initializeBoard();
+  // await waitForEnterThenClear();
 
   let jetPattern = '';
   const lines: string[] = (await Deno.readTextFile(filename)).split(/\r?\n/);
@@ -321,12 +290,18 @@ async function main1(filename: string) {
     }
 
     // printBoard();
-    // console.log(`current block num = ${curBlockNum}, maxY = ${board.maxY}, board height = ${board.grid.length}`);
+    // console.log(`current block num = ${curBlockNum}, maxY = ${board.maxY}`);
     // await waitForEnterThenClear();
   }
   printBoard();
 
-  console.log(`Tower height = ${board.floorY + board.maxY}, grid height = ${board.grid.length}`);
+  console.log(`Tower height = ${board.maxY}`);
 }
 
-main1('input.txt');
+// tiny.txt produces a block pattern that repeats every 53 rows.
+// input.txt produces a pattern of blocks that repeats every 2785 lines.
+async function main2() {
+
+}
+
+main1('tiny.txt');
