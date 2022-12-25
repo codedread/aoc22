@@ -21,8 +21,6 @@ enum ActionType {
   BUILD_CLAY_ROBOT = "BUILD_CLAY_ROBOT",
   BUILD_OBSIDIAN_ROBOT = "BUILD_OBSIDIAN_ROBOT",
   BUILD_GEODE_ROBOT = "BUILD_GEODE_ROBOT",
-  /** Special non-action signifying time has run out. */
-  FINISH = "FINISH",
 }
 
 interface ActionNode {
@@ -42,7 +40,8 @@ interface Blueprint {
   readonly oreCostForGeodeCrackingRobot: number;
   readonly obsidianCostForGeodeCrackingRobot: number;
 
-  maxGeodes?: number;
+  maxGeodes: number;
+  bestNode?: ActionNode;
 }
 
 const ARITHMETIC_SUM: Map<number, number> = new Map();
@@ -86,8 +85,7 @@ function canDo(actionType: ActionType, world: World, blueprint: Blueprint): bool
   const canAffordGeodeRobot = world.ore >= blueprint.oreCostForGeodeCrackingRobot
       && world.obsidian >= blueprint.obsidianCostForGeodeCrackingRobot;
 
-  if (actionType === ActionType.START ||
-      actionType === ActionType.FINISH) return true;
+  if (actionType === ActionType.START) return true;
   switch (actionType) {
     case ActionType.WAIT:
       const doNotWait = (
@@ -140,7 +138,7 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
     couldHaveBuiltGeodeRobotButDidNot = canDo(ActionType.BUILD_GEODE_ROBOT, action.world, blueprint);
   }
 
-  if (action.type !== ActionType.START && action.type !== ActionType.FINISH) {
+  if (action.type !== ActionType.START) {
     // Accrue raw resources.
     action.world.ore += action.world.oreCollectingRobots;
     action.world.clay += action.world.clayCollectingRobots;
@@ -148,6 +146,7 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
     action.world.geode += action.world.geodeCrackingRobots;
     if (action.world.geode > blueprint.maxGeodes) {
       blueprint.maxGeodes = action.world.geode;
+      blueprint.bestNode = action;
     }
 
     // Manufactor robot (deduct resource cost and add a robot).
@@ -254,8 +253,7 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
   // Only build a geode robot if we can, if we did not wait last turn instead
   // of building one, and we have more than 1 min left.
   if (canDo(ActionType.BUILD_GEODE_ROBOT, action.world, blueprint)
-      && !couldHaveBuiltGeodeRobotButDidNot
-      && action.world.minutesLeft > 1) {
+      && !couldHaveBuiltGeodeRobotButDidNot) {
     action.next.push({
       type: ActionType.BUILD_GEODE_ROBOT,
       world: structuredClone(action.world),
@@ -264,7 +262,7 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
     });
   }
 
-  if (true) { //action.world.minutesLeft > 0) {
+  if (action.world.minutesLeft > 0) {
     for (const childAction of action.next) {
       doAction(childAction, blueprint);
     }
@@ -278,6 +276,7 @@ async function parseBlueprints(filename: string) {
   const lines: string[] = (await Deno.readTextFile(filename)).split(/\r?\n/);
   for (let i = 0; i < lines.length; ++i) {
     const line = lines[i];
+    if (line.length === 0) continue;
     let oreCostForOreCollectingRobot: number;
     let oreCostForClayCollectingRobot: number;
     let oreCostForObsidianCollectingRobot: number;
@@ -303,7 +302,7 @@ async function parseBlueprints(filename: string) {
     obsidianCostForGeodeCrackingRobot = parseInt(clayObsidian[2]);
 
     blueprints.push({
-      index: i,
+      index: i + 1,
       oreCostForOreCollectingRobot,
       oreCostForClayCollectingRobot,
       oreCostForObsidianCollectingRobot,
@@ -334,27 +333,48 @@ function printTree(action: ActionNode, maxMinsLeft = 0, indent: number = 0) {
 
 async function main1(filename: string) {
   await parseBlueprints(filename);
-  blueprint = blueprints[1];
 
-  const tree: ActionNode = {
-    type: ActionType.START,
-    world: {
-      minutesLeft: 24,
+  let qualitySum = 0;
+  for (const blueprint of blueprints) {
+    const tree: ActionNode = {
+      type: ActionType.START,
+      world: {
+        minutesLeft: 24,
+      
+        ore: 0,
+        clay: 0,
+        obsidian: 0,
+        geode: 0,
+      
+        oreCollectingRobots: 1,
+        clayCollectingRobots: 0,
+        obsidianCollectingRobots: 0,
+        geodeCrackingRobots: 0,
+      },
+      next: [],
+    };
+
+    doAction(tree, blueprint);
+    console.log(`Processed blueprint #${blueprint.index}`);
+    qualitySum += (blueprint.index * blueprint.maxGeodes);
     
-      ore: 0,
-      clay: 0,
-      obsidian: 0,
-      geode: 0,
-    
-      oreCollectingRobots: 1,
-      clayCollectingRobots: 0,
-      obsidianCollectingRobots: 0,
-      geodeCrackingRobots: 0,
-    },
-    next: [],
-  };
-  doAction(tree, blueprint);
-  printTree(tree, 1);
+    // if (blueprint.bestNode) {
+    //   const actions: ActionType[] = [];
+    //   let action = blueprint.bestNode;
+    //   while (action.parent) {
+    //     actions.push(action.type);
+    //     action = action.parent;
+    //   }
+    //   console.log(`${blueprint.index}: (${blueprint.maxGeodes})`);
+    //   actions.reverse();
+    //   for (let i = 0; i < actions.length; ++i) {
+    //     console.log(`  ${i+1}: ${actions[i]}`);
+    //   }
+    // }
+    //printTree(tree, 1);
+    //break;
+  }
+  console.log(qualitySum);
 }
 
-main1('tiny.txt');
+main1('input.txt');
