@@ -56,8 +56,12 @@ function canDo(actionType: ActionType, world: World, blueprint: Blueprint): bool
    *   - we can buy a geode robot and have 0 geod robots (same).
    *   - we can afford any robot.
    * - Never build more ore robots if we can build any type of robot every min.
+   *   (We get enough ore to do anything every minute)
    * - Never build more clay robots if we can build an obsidian robot every min.
+   *   (We get enough clay to use it every minute)
    * - Never build more obsidian robots if we can build a geode robot every min.
+   *   (We get enough obsidion to use it every minute).
+   * - 
    */
   const maxOreNeeded = Math.max(
       blueprint.oreCostForOreCollectingRobot,
@@ -103,10 +107,29 @@ function canDo(actionType: ActionType, world: World, blueprint: Blueprint): bool
 /** Consume and produce in 1 minute. */
 function doAction(action: ActionNode, blueprint: Blueprint) {
   if (!blueprint) throw `No blueprint defined`;
-  if (!canDo(action.type, action.world, blueprint)) throw `Cannot manufacture robot: ${action.type}`;
+  if (!canDo(action.type, action.world, blueprint)) throw `Cannot build robot: ${action.type}`;
+
+  /**
+   * Other circumstances mean a sub-tree is dead (not worth following). We can
+   * eliminate these sub-trees by not producing some child actions.
+   *
+   * - If we waited last turn, but could have created a robot of a certain type
+   *   then we should not try to create a robot of that type next. That makes no
+   *   sense, since we should have created it last turn (there is zero benefit
+   *   to wait).
+   */
+  let couldHaveCreatedOreRobotButDidNot = false;
+  let couldHaveCreatedClayRobotButDidNot = false;
+  let couldHaveCreatedObsRobotButDidNot = false;
+  let couldHaveCreatedGeodeRobotButDidNot = false;
+  if (action.type === ActionType.WAIT) {
+    couldHaveCreatedOreRobotButDidNot = canDo(ActionType.BUILD_ORE_ROBOT, action.world, blueprint);
+    couldHaveCreatedClayRobotButDidNot = canDo(ActionType.BUILD_CLAY_ROBOT, action.world, blueprint);
+    couldHaveCreatedObsRobotButDidNot = canDo(ActionType.BUILD_OBSIDIAN_ROBOT, action.world, blueprint);
+    couldHaveCreatedGeodeRobotButDidNot = canDo(ActionType.BUILD_GEODE_ROBOT, action.world, blueprint);
+  }
 
   if (action.type !== ActionType.START && action.type !== ActionType.FINISH) {
-
     // Accrue raw resources.
     action.world.ore += action.world.oreCollectingRobots;
     action.world.clay += action.world.clayCollectingRobots;
@@ -140,10 +163,7 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
 
   if (!action.next) throw `Bad action.next`;
 
-  if (canDo(ActionType.WAIT, action.world, blueprint)
-      // && (action.world.ore < blueprint.oreCostForClayCollectingRobot &&
-      //     action.world.clayCollectingRobots === 0)
-        ) {
+  if (canDo(ActionType.WAIT, action.world, blueprint)) {
     action.next.push({
       type: ActionType.WAIT,
       world: {...action.world},
@@ -152,7 +172,8 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
     });
   }
 
-  if (canDo(ActionType.BUILD_ORE_ROBOT, action.world, blueprint)) {
+  if (canDo(ActionType.BUILD_ORE_ROBOT, action.world, blueprint)
+      && !couldHaveCreatedOreRobotButDidNot) {
     action.next.push({
       type: ActionType.BUILD_ORE_ROBOT,
       world: {...action.world},
@@ -160,7 +181,8 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
       parent: action,
     });
   }
-  if (canDo(ActionType.BUILD_CLAY_ROBOT, action.world, blueprint)) {
+  if (canDo(ActionType.BUILD_CLAY_ROBOT, action.world, blueprint)
+      && !couldHaveCreatedClayRobotButDidNot) {
     action.next.push({
       type: ActionType.BUILD_CLAY_ROBOT,
       world: {...action.world},
@@ -168,7 +190,8 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
       parent: action,
     });
   }
-  if (canDo(ActionType.BUILD_OBSIDIAN_ROBOT, action.world, blueprint)) {
+  if (canDo(ActionType.BUILD_OBSIDIAN_ROBOT, action.world, blueprint)
+      && !couldHaveCreatedObsRobotButDidNot) {
     action.next.push({
       type: ActionType.BUILD_OBSIDIAN_ROBOT,
       world: {...action.world},
@@ -176,7 +199,8 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
       parent: action,
     });
   }
-  if (canDo(ActionType.BUILD_GEODE_ROBOT, action.world, blueprint)) {
+  if (canDo(ActionType.BUILD_GEODE_ROBOT, action.world, blueprint)
+      && !couldHaveCreatedGeodeRobotButDidNot) {
     action.next.push({
       type: ActionType.BUILD_GEODE_ROBOT,
       world: {...action.world},
@@ -185,9 +209,9 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
     });
   }
 
-  // Until our algorithm further restricted, we can't go lower than this.
-  // Currently printTree() results in over 19M lines of text!
-  if (action.world.minutesLeft > 5) {
+  // Until our algorithm is further restricted, we can't go lower than this.
+  // Currently printTree() results in over 8M lines of text!
+  if (action.world.minutesLeft > 1) {
     for (const childAction of action.next) {
       doAction(childAction, blueprint);
     }
