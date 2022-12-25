@@ -42,19 +42,58 @@ interface Blueprint {
   obsidianCostForGeodeCrackingRobot: number;
 }
 
-function canDo(actionType: ActionType, world: World): boolean {
-  if (!blueprint) throw `No blueprint defined`;
-  if (actionType === ActionType.WAIT ||
-      actionType === ActionType.START ||
+function canDo(actionType: ActionType, world: World, blueprint: Blueprint): boolean {
+  /**
+   * Now we choose next actions on this node.
+   *
+   * We must some restrictions on the code so that the tree produced is not
+   * exponential in nature and is positioned to get the best result. We observe
+   * the following rules:
+   *
+   * - Never wait if:
+   *   - we can buy a clay robot and have 0 clay robots (necessary to win).
+   *   - we can buy an obsidian robot and have 0 obsidian robots (same as above).
+   *   - we can buy a geode robot and have 0 geod robots (same).
+   *   - we can afford any robot.
+   * - Never build more ore robots if we can build any type of robot every min.
+   * - Never build more clay robots if we can build an obsidian robot every min.
+   * - Never build more obsidian robots if we can build a geode robot every min.
+   */
+  const maxOreNeeded = Math.max(
+      blueprint.oreCostForOreCollectingRobot,
+      blueprint.oreCostForClayCollectingRobot,
+      blueprint.oreCostForObsidianCollectingRobot,
+      blueprint.oreCostForGeodeCrackingRobot);
+  const maxClayNeeded = blueprint.clayCostForObsidianCollectingRobot;
+  const maxObsidianNeeded = blueprint.obsidianCostForGeodeCrackingRobot;
+  const canAffordOreRobot = world.ore >= blueprint.oreCostForOreCollectingRobot;
+  const canAffordClayRobot = world.ore >= blueprint.oreCostForClayCollectingRobot;
+  const canAffordObsRobot = world.ore >= blueprint.oreCostForObsidianCollectingRobot
+      && world.clay >= blueprint.clayCostForObsidianCollectingRobot;
+  const canAffordGeodeRobot = world.ore >= blueprint.oreCostForGeodeCrackingRobot
+      && world.obsidian >= blueprint.obsidianCostForGeodeCrackingRobot;
+
+  if (actionType === ActionType.START ||
       actionType === ActionType.FINISH) return true;
   switch (actionType) {
+    case ActionType.WAIT:
+      const doNotWait = (
+        (world.clayCollectingRobots === 0 && canAffordClayRobot) ||
+        (world.obsidianCollectingRobots === 0 && canAffordObsRobot) ||
+        (world.geodeCrackingRobots === 0 && canAffordGeodeRobot) ||
+        (canAffordOreRobot && canAffordClayRobot && canAffordObsRobot && canAffordGeodeRobot)
+      );
+      return !doNotWait;
     case ActionType.BUILD_ORE_ROBOT:
-      return world.ore >= blueprint.oreCostForOreCollectingRobot;
+      return world.ore >= blueprint.oreCostForOreCollectingRobot &&
+             world.oreCollectingRobots < maxOreNeeded;
     case ActionType.BUILD_CLAY_ROBOT:
-      return world.ore >= blueprint.oreCostForClayCollectingRobot;
+      return world.ore >= blueprint.oreCostForClayCollectingRobot &&
+             world.clayCollectingRobots < maxClayNeeded;
     case ActionType.BUILD_OBSIDIAN_ROBOT:
       return world.ore >= blueprint.oreCostForObsidianCollectingRobot &&
-             world.clay >= blueprint.clayCostForObsidianCollectingRobot;
+             world.clay >= blueprint.clayCostForObsidianCollectingRobot &&
+             world.obsidianCollectingRobots < maxObsidianNeeded;
     case ActionType.BUILD_GEODE_ROBOT:
       return world.ore >= blueprint.oreCostForGeodeCrackingRobot &&
              world.obsidian >= blueprint.obsidianCostForGeodeCrackingRobot;
@@ -62,9 +101,9 @@ function canDo(actionType: ActionType, world: World): boolean {
 }
 
 /** Consume and produce in 1 minute. */
-function doAction(action: ActionNode, iter: number = 0) {
+function doAction(action: ActionNode, blueprint: Blueprint) {
   if (!blueprint) throw `No blueprint defined`;
-  if (!canDo(action.type, action.world)) throw `Cannot manufacture robot: ${action.type}`;
+  if (!canDo(action.type, action.world, blueprint)) throw `Cannot manufacture robot: ${action.type}`;
 
   if (action.type !== ActionType.START && action.type !== ActionType.FINISH) {
 
@@ -99,9 +138,12 @@ function doAction(action: ActionNode, iter: number = 0) {
     action.world.minutesLeft--;
   }
 
-  // Now we choose next actions on this node.
   if (!action.next) throw `Bad action.next`;
-  if (canDo(ActionType.WAIT, action.world)) {
+
+  if (canDo(ActionType.WAIT, action.world, blueprint)
+      // && (action.world.ore < blueprint.oreCostForClayCollectingRobot &&
+      //     action.world.clayCollectingRobots === 0)
+        ) {
     action.next.push({
       type: ActionType.WAIT,
       world: {...action.world},
@@ -109,7 +151,8 @@ function doAction(action: ActionNode, iter: number = 0) {
       parent: action,
     });
   }
-  if (canDo(ActionType.BUILD_ORE_ROBOT, action.world)) {
+
+  if (canDo(ActionType.BUILD_ORE_ROBOT, action.world, blueprint)) {
     action.next.push({
       type: ActionType.BUILD_ORE_ROBOT,
       world: {...action.world},
@@ -117,7 +160,7 @@ function doAction(action: ActionNode, iter: number = 0) {
       parent: action,
     });
   }
-  if (canDo(ActionType.BUILD_CLAY_ROBOT, action.world)) {
+  if (canDo(ActionType.BUILD_CLAY_ROBOT, action.world, blueprint)) {
     action.next.push({
       type: ActionType.BUILD_CLAY_ROBOT,
       world: {...action.world},
@@ -125,7 +168,7 @@ function doAction(action: ActionNode, iter: number = 0) {
       parent: action,
     });
   }
-  if (canDo(ActionType.BUILD_OBSIDIAN_ROBOT, action.world)) {
+  if (canDo(ActionType.BUILD_OBSIDIAN_ROBOT, action.world, blueprint)) {
     action.next.push({
       type: ActionType.BUILD_OBSIDIAN_ROBOT,
       world: {...action.world},
@@ -133,7 +176,7 @@ function doAction(action: ActionNode, iter: number = 0) {
       parent: action,
     });
   }
-  if (canDo(ActionType.BUILD_GEODE_ROBOT, action.world)) {
+  if (canDo(ActionType.BUILD_GEODE_ROBOT, action.world, blueprint)) {
     action.next.push({
       type: ActionType.BUILD_GEODE_ROBOT,
       world: {...action.world},
@@ -142,9 +185,11 @@ function doAction(action: ActionNode, iter: number = 0) {
     });
   }
 
-  if (action.world.minutesLeft > 9) {
+  // Until our algorithm further restricted, we can't go lower than this.
+  // Currently printTree() results in over 19M lines of text!
+  if (action.world.minutesLeft > 5) {
     for (const childAction of action.next) {
-      doAction(childAction, iter + 1);
+      doAction(childAction, blueprint);
     }
   }
 }
@@ -190,18 +235,21 @@ async function parseBlueprints(filename: string) {
   }
 }
 
-function printTree(action: ActionNode, indent: number = 0) {
+function printTree(action: ActionNode, maxMinsLeft = 0, indent: number = 0) {
   const indentStr = ' '.repeat(indent);
-  console.log(`${indentStr}action: ${action.type}`);
-  console.log(`${indentStr}world: ${JSON.stringify(action.world, undefined, indent + 2)}`);
-  console.log(`${indentStr}next: [`);
+  if (action.world.minutesLeft <= maxMinsLeft) {
+    console.log(`${indentStr}action: ${action.type}`);
+    console.log(`${indentStr}world: ${JSON.stringify(action.world, undefined, indent + 2)}`);
+    console.log(`${indentStr}next: [`);
+  }
   if (action.next) {
     for (const childAction of action?.next) {
-      printTree(childAction, indent + 2);
-      console.log(`${indentStr}---`);
+      printTree(childAction, maxMinsLeft, indent + 2);
     }
   }
-  console.log(`${indentStr}]`);
+  if (action.world.minutesLeft <= maxMinsLeft) {
+    console.log(`${indentStr}]`);
+  }
 }
 
 async function main1(filename: string) {
@@ -225,8 +273,8 @@ async function main1(filename: string) {
     },
     next: [],
   };
-  doAction(tree);
-  printTree(tree);
+  doAction(tree, blueprint);
+  printTree(tree, 6);
 }
 
 main1('tiny.txt');
