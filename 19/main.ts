@@ -1,4 +1,21 @@
-const TEST_MINUTES = 24;
+import { parse } from 'https://deno.land/std@0.168.0/flags/mod.ts';
+
+const flags = parse(Deno.args, {
+  boolean: ['test'],
+  string: ['part', 'mins', 'print'],
+  default: { part: '1', mins: undefined, print: undefined , test: false },
+});
+
+const RUN_PART = parseInt(flags.part);
+if (RUN_PART !== 1 && RUN_PART !== 2) throw `Bad part ${flags.parts}`;
+
+const TEST_MINUTES = flags.mins ? parseInt(flags.mins) : (RUN_PART === 1 ? 24 : 32);
+
+if (![undefined, 'tree', 'leaves'].includes(flags.print)) throw `Bad print ${flags.print}`;
+const PRINT_TREE = (flags.print === 'tree');
+const PRINT_LEAVES = (flags.print === 'leaves');
+
+const INPUT_FILE = flags.test ? 'tiny.txt' : 'input.txt';
 
 interface World {
   minutesLeft: number;
@@ -214,104 +231,101 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
     }
 
     action.world.minutesLeft--;
-  }
-
-  if (!action.next) throw `Bad action.next`;
-
-  if (action.world.geodeCrackingRobots === 0) {
-    /**
-     * If there is only 1 minute left and we haven't made a geode robot, this
-     * sub-tree is useless, it will not crack any geodes.
-     */
-    if (action.world.minutesLeft <= 1) {
-      return;
-    }
-
-  /**
-   * If we have no geode robots yet. Pretend we could magically build 1
-   * obsidian robot each turn hence, figure out how many turns it would take
-   * to give us enough obsidian to buy a geode robot. If we don't have that
-   * many minutes+1 (to create at least one geode), then kill this sub-tree.
-   */
-  if (action.world.obsidian < blueprint.obsidianCostForGeodeCrackingRobot) {
-      const obsidianNeeded = blueprint.obsidianCostForGeodeCrackingRobot - action.world.obsidian;
-      let futureObsidian = action.world.obsidianCollectingRobots;
-      let minsNeeded = 0;
-      while (futureObsidian < obsidianNeeded) {
-        minsNeeded++;
-        futureObsidian += (action.world.obsidianCollectingRobots + minsNeeded);
-      }
-      if (minsNeeded >= action.world.minutesLeft - 1) {
-        return;
-      }
-    }
-  }
-
-  if (canDo(ActionType.WAIT, action.world, blueprint)
-      && (action.world.minutesLeft > 2 || action.world.geodeCrackingRobots > 0)) {
-      // && (action.world.minutesLeft > 2)) {
-    action.next.push({
-      type: ActionType.WAIT,
-      world: structuredClone(action.world),
-      next: [],
-      parent: action,
-    });
-    nodesAtEachLevel[action.world.maxMinutes - action.world.minutesLeft - 1]++;
-  }
-
-  if (canDo(ActionType.BUILD_ORE_ROBOT, action.world, blueprint)
-      && !couldHaveBuiltOreRobotButDidNot) {
-    action.next.push({
-      type: ActionType.BUILD_ORE_ROBOT,
-      world: structuredClone(action.world),
-      next: [],
-      parent: action,
-    });
-    nodesAtEachLevel[action.world.maxMinutes - action.world.minutesLeft - 1]++;
-  }
-  if (canDo(ActionType.BUILD_CLAY_ROBOT, action.world, blueprint)
-      && !couldHaveBuiltClayRobotButDidNot
-      && action.world.minutesLeft > 3) {
-    action.next.push({
-      type: ActionType.BUILD_CLAY_ROBOT,
-      world: structuredClone(action.world),
-      next: [],
-      parent: action,
-    });
-    nodesAtEachLevel[action.world.maxMinutes - action.world.minutesLeft - 1]++;
-  }
-
-  // Only build an obsidian robot if we can, if we did not wait last turn
-  // instead of building one, and we have more than 2 mins left (otherwise we
-  // cannot see the benefits of this robot since we have to use its obsidian
-  // to build a geode robot and then another minute to crack a geode).
-  if (canDo(ActionType.BUILD_OBSIDIAN_ROBOT, action.world, blueprint)
-      && !couldHaveBuiltObsRobotButDidNot
-      && action.world.minutesLeft > 2) {
-    action.next.push({
-      type: ActionType.BUILD_OBSIDIAN_ROBOT,
-      world: structuredClone(action.world),
-      next: [],
-      parent: action,
-    });
-    nodesAtEachLevel[action.world.maxMinutes - action.world.minutesLeft - 1]++;
-  }
-
-  // Only build a geode robot if we can, if we did not wait last turn instead
-  // of building one, and we have more than 1 min left.
-  if (canDo(ActionType.BUILD_GEODE_ROBOT, action.world, blueprint)
-      && !couldHaveBuiltGeodeRobotButDidNot) {
-    action.next.push({
-      type: ActionType.BUILD_GEODE_ROBOT,
-      world: structuredClone(action.world),
-      next: [],
-      parent: action,
-    });
-    nodesAtEachLevel[action.world.maxMinutes - action.world.minutesLeft - 1]++;
+    nodesAtEachLevel[action.world.maxMinutes - action.world.minutesLeft]++;
   }
 
   // If we have more minutes to evaluate, see what next actions should exist.
   if (action.world.minutesLeft > action.world.maxMinutes - TEST_MINUTES) {
+    if (!action.next) throw `Bad action.next`;
+
+    if (action.world.geodeCrackingRobots === 0) {
+      /**
+       * If there is only 1 minute left and we haven't made a geode robot, this
+       * sub-tree is useless, it will not crack any geodes.
+       */
+      if (action.world.minutesLeft <= 1) {
+        return;
+      }
+
+      /**
+       * If we have no geode robots yet. Pretend we could magically build 1
+       * obsidian robot each turn hence, figure out how many turns it would take
+       * to give us enough obsidian to buy a geode robot. If we don't have that
+       * many minutes+1 (to create at least one geode), then kill this sub-tree.
+       */
+      if (action.world.obsidian < blueprint.obsidianCostForGeodeCrackingRobot) {
+        const obsidianNeeded = blueprint.obsidianCostForGeodeCrackingRobot - action.world.obsidian;
+        let futureObsidian = action.world.obsidianCollectingRobots;
+        let minsNeeded = 0;
+        while (futureObsidian < obsidianNeeded) {
+          minsNeeded++;
+          futureObsidian += (action.world.obsidianCollectingRobots + minsNeeded);
+        }
+        if (minsNeeded >= action.world.minutesLeft - 1) {
+          return;
+        }
+      }
+    }
+
+    if (canDo(ActionType.WAIT, action.world, blueprint)
+        && (action.world.minutesLeft > 2 || action.world.geodeCrackingRobots > 0)) {
+        // && (action.world.minutesLeft > 2)) {
+      action.next.push({
+        type: ActionType.WAIT,
+        world: structuredClone(action.world),
+        next: [],
+        parent: action,
+      });
+    }
+
+    if (canDo(ActionType.BUILD_ORE_ROBOT, action.world, blueprint)
+        && !couldHaveBuiltOreRobotButDidNot) {
+      action.next.push({
+        type: ActionType.BUILD_ORE_ROBOT,
+        world: structuredClone(action.world),
+        next: [],
+        parent: action,
+      });
+    }
+
+    if (canDo(ActionType.BUILD_CLAY_ROBOT, action.world, blueprint)
+        && !couldHaveBuiltClayRobotButDidNot
+        && action.world.minutesLeft > 3) {
+      action.next.push({
+        type: ActionType.BUILD_CLAY_ROBOT,
+        world: structuredClone(action.world),
+        next: [],
+        parent: action,
+      });
+    }
+
+    // Only build an obsidian robot if we can, if we did not wait last turn
+    // instead of building one, and we have more than 2 mins left (otherwise we
+    // cannot see the benefits of this robot since we have to use its obsidian
+    // to build a geode robot and then another minute to crack a geode).
+    if (canDo(ActionType.BUILD_OBSIDIAN_ROBOT, action.world, blueprint)
+        && !couldHaveBuiltObsRobotButDidNot
+        && action.world.minutesLeft > 2) {
+      action.next.push({
+        type: ActionType.BUILD_OBSIDIAN_ROBOT,
+        world: structuredClone(action.world),
+        next: [],
+        parent: action,
+      });
+    }
+
+    // Only build a geode robot if we can, if we did not wait last turn instead
+    // of building one, and we have more than 1 min left.
+    if (canDo(ActionType.BUILD_GEODE_ROBOT, action.world, blueprint)
+        && !couldHaveBuiltGeodeRobotButDidNot) {
+      action.next.push({
+        type: ActionType.BUILD_GEODE_ROBOT,
+        world: structuredClone(action.world),
+        next: [],
+        parent: action,
+      });
+    }
+
     for (const childAction of action.next) {
       doAction(childAction, blueprint);
     }
@@ -319,7 +333,6 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
 }
 
 const blueprints: Blueprint[] = [];
-let blueprint: Blueprint;
 
 async function parseBlueprints(filename: string) {
   const lines: string[] = (await Deno.readTextFile(filename)).split(/\r?\n/);
@@ -377,7 +390,6 @@ function printTree(action: ActionNode, maxMinsLeft = 0, indent: number = 0) {
   const indentStr = ' '.repeat(indent);
   if (action.world.minutesLeft <= maxMinsLeft) {
     console.log(`${indentStr}action: ${action.type}`);
-    // console.log(`${indentStr}world: ${JSON.stringify(action.world, undefined, indent + 2)}`);
     console.log(`${indentStr}world: ${action.world.minutesLeft}/${action.world.maxMinutes} ` +
         `o:${action.world.ore}/c:${action.world.clay}/ob:${action.world.obsidian}/g:${action.world.geode} ` +
         `or:${action.world.oreCollectingRobots}/cr:${action.world.clayCollectingRobots}/` +
@@ -424,22 +436,28 @@ async function main1(filename: string) {
     doAction(tree, blueprint);
     console.log(`Processed blueprint #${blueprint.index}`);
     qualitySum += (blueprint.index * blueprint.maxGeodes);
-    
-    // if (blueprint.bestNode) {
-    //   const actions: ActionType[] = [];
-    //   let action = blueprint.bestNode;
-    //   while (action.parent) {
-    //     actions.push(action.type);
-    //     action = action.parent;
-    //   }
-    //   console.log(`${blueprint.index}: (${blueprint.maxGeodes})`);
-    //   actions.reverse();
-    //   for (let i = 0; i < actions.length; ++i) {
-    //     console.log(`  ${i+1}: ${actions[i]}`);
-    //   }
-    // }
-    //printTree(tree, 1);
-    //break;
+
+    if (PRINT_TREE || PRINT_LEAVES) {
+      if (blueprint.bestNode) {
+        const actions: ActionType[] = [];
+        let action = blueprint.bestNode;
+        while (action.parent) {
+          actions.push(action.type);
+          action = action.parent;
+        }
+        console.log(`${blueprint.index}: (${blueprint.maxGeodes})`);
+        actions.reverse();
+        for (let i = 0; i < actions.length; ++i) {
+          console.log(`  ${i+1}: ${actions[i]}`);
+        }
+      }
+
+      if (PRINT_TREE) {
+        printTree(tree, tree.world.maxMinutes);
+      } else if (PRINT_LEAVES) {
+        printTree(tree, tree.world.maxMinutes - TEST_MINUTES);
+      }
+    }
   }
   console.log(qualitySum);
 }
@@ -488,11 +506,33 @@ async function main2(filename: string) {
         console.log(`  ${i+1}: ${actions[i]}`);
       }
     }
-    // printTree(tree, tree.world.maxMinutes);
-    printTree(tree, tree.world.maxMinutes - TEST_MINUTES);
+    if (PRINT_TREE || PRINT_LEAVES) {
+      if (blueprint.bestNode) {
+        const actions: ActionType[] = [];
+        let action = blueprint.bestNode;
+        while (action.parent) {
+          actions.push(action.type);
+          action = action.parent;
+        }
+        console.log(`${blueprint.index}: (${blueprint.maxGeodes})`);
+        actions.reverse();
+        for (let i = 0; i < actions.length; ++i) {
+          console.log(`  ${i+1}: ${actions[i]}`);
+        }
+      }
+
+      if (PRINT_TREE) {
+        printTree(tree, tree.world.maxMinutes);
+      } else if (PRINT_LEAVES) {
+        printTree(tree, tree.world.maxMinutes - TEST_MINUTES);
+      }
+    }
     break;
   }
 }
 
-main1('input.txt');
-// main2('tiny.txt');
+if (RUN_PART === 1) {
+  main1(INPUT_FILE);
+} else {
+  main2(INPUT_FILE);
+}
