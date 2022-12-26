@@ -1,5 +1,8 @@
+const TEST_MINUTES = 24;
+
 interface World {
   minutesLeft: number;
+  readonly maxMinutes: number;
 
   geode:  number;
   obsidian: number;
@@ -31,6 +34,8 @@ interface ActionNode {
   parent?: ActionNode;
 }
 
+let nodesAtEachLevel: number[] = [];
+
 interface Blueprint {
   readonly index: number;
   readonly oreCostForOreCollectingRobot: number;
@@ -44,32 +49,23 @@ interface Blueprint {
   bestNode?: ActionNode;
 }
 
-const ARITHMETIC_SUM: Map<number, number> = new Map();
-ARITHMETIC_SUM.set(0, 0);
-for (let i = 1; i < 24; ++i) {
-  ARITHMETIC_SUM.set(i, i + ARITHMETIC_SUM.get(i-1)!);
-}
-
 function canDo(actionType: ActionType, world: World, blueprint: Blueprint): boolean {
   /**
    * Now we choose next actions on this node.
    *
-   * We must some restrictions on the code so that the tree produced is not
+   * We must put some restrictions on the code so that the tree produced is not
    * exponential in nature and is positioned to get the best result. We observe
    * the following rules:
    *
    * - Never wait if:
    *   - we can buy a clay robot and have 0 clay robots (necessary to win).
    *   - we can buy an obsidian robot and have 0 obsidian robots (same as above).
-   *   - we can buy a geode robot and have 0 geod robots (same).
+   *   - we can buy a geode robot and have 0 geode robots (same).
    *   - we can afford any robot.
    * - Never build more ore robots if we can build any type of robot every min.
-   *   (We get enough ore to do anything every minute)
+   *   We get enough ore to do anything every minute and can only build 1 robot.
    * - Never build more clay robots if we can build an obsidian robot every min.
-   *   (We get enough clay to use it every minute)
    * - Never build more obsidian robots if we can build a geode robot every min.
-   *   (We get enough obsidion to use it every minute).
-   * - 
    */
   const maxOreNeeded = Math.max(
       blueprint.oreCostForOreCollectingRobot,
@@ -88,24 +84,70 @@ function canDo(actionType: ActionType, world: World, blueprint: Blueprint): bool
   if (actionType === ActionType.START) return true;
   switch (actionType) {
     case ActionType.WAIT:
-      const doNotWait = (
-        (world.clayCollectingRobots === 0 && canAffordClayRobot) ||
-        (world.obsidianCollectingRobots === 0 && canAffordObsRobot) ||
-        (world.geodeCrackingRobots === 0 && canAffordGeodeRobot) ||
-        (canAffordOreRobot && canAffordClayRobot && canAffordObsRobot && canAffordGeodeRobot)
-      );
+      /**
+       * WAITs seem to be the biggest thing in the tree, since it can be done any
+       * time and at any layer. We need to discourage unnecessary chains of WAITs.
+       *
+       * - if we are not gaining any clay:
+       *   - no waiting once we have max ore for {ore,clay} robots.
+       * - else if we are gaining clay:
+       *   - if we are not gaining any obsidian:
+       *     - no waiting once we have max ore for {ore,clay,obsidian} robots
+       *       and clay for obsidian robots.
+       *   - else if we are gaining any obsidian:
+       *     - no waiting once we have max ore for {ore,clay,obsidian,geode}
+       *       robots and obsidian for geode robots.
+       * - no waiting if we can afford any robot.
+       */
+      // world: 10/32 o:51/c:11/ob:0/g:0 or:4/cr:1/obr:0/gr:0,
+      let doNotWait = false;
+      if (world.clayCollectingRobots === 0) {
+        doNotWait = world.ore >= Math.max(
+                             blueprint.oreCostForOreCollectingRobot,
+                             blueprint.oreCostForClayCollectingRobot);
+      } else {
+        if (world.obsidianCollectingRobots === 0) {
+          doNotWait =
+              world.ore >= Math.max(
+                               blueprint.oreCostForOreCollectingRobot,
+                               blueprint.oreCostForClayCollectingRobot,
+                               blueprint.oreCostForObsidianCollectingRobot) &&
+              world.clay >= blueprint.clayCostForObsidianCollectingRobot;
+        } else {
+          doNotWait = world.ore >= maxOreNeeded &&
+              world.obsidian >= blueprint.obsidianCostForGeodeCrackingRobot;
+        }
+      }
+      if (!doNotWait) {
+        doNotWait =
+            (canAffordOreRobot && canAffordClayRobot && canAffordObsRobot &&
+             canAffordGeodeRobot);
+      }
       return !doNotWait;
     case ActionType.BUILD_ORE_ROBOT:
-      return world.ore >= blueprint.oreCostForOreCollectingRobot &&
-             world.oreCollectingRobots < maxOreNeeded;
+      // Stop building ore robots once we have enough ore per minute or are
+      // into the obsidian robot stage.
+      return world.ore >= blueprint.oreCostForOreCollectingRobot
+             && world.oreCollectingRobots < maxOreNeeded
+             // && world.obsidianCollectingRobots === 0
+             ;
+
     case ActionType.BUILD_CLAY_ROBOT:
-      return world.ore >= blueprint.oreCostForClayCollectingRobot &&
-             world.clayCollectingRobots < maxClayNeeded;
+      // Stop building clay robots once we either have enough clay per minute
+      // or are into the geode robot stage.
+    return world.ore >= blueprint.oreCostForClayCollectingRobot
+             && world.clayCollectingRobots < maxClayNeeded
+             // && world.geodeCrackingRobots < 2
+             ;
+    
     case ActionType.BUILD_OBSIDIAN_ROBOT:
+      // Stop building obsidian robots once we have enough obsidian per minute.
       return world.ore >= blueprint.oreCostForObsidianCollectingRobot &&
              world.clay >= blueprint.clayCostForObsidianCollectingRobot &&
              world.obsidianCollectingRobots < maxObsidianNeeded;
+
     case ActionType.BUILD_GEODE_ROBOT:
+      // 
       return world.ore >= blueprint.oreCostForGeodeCrackingRobot &&
              world.obsidian >= blueprint.obsidianCostForGeodeCrackingRobot;
   }
@@ -149,7 +191,7 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
       blueprint.bestNode = action;
     }
 
-    // Manufactor robot (deduct resource cost and add a robot).
+    // Build robot (deduct resource cost and add a robot).
     switch (action.type) {
       case ActionType.BUILD_ORE_ROBOT:
         action.world.oreCollectingRobots++;
@@ -181,17 +223,17 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
      * If there is only 1 minute left and we haven't made a geode robot, this
      * sub-tree is useless, it will not crack any geodes.
      */
-    if (action.world.minutesLeft <= 1 && action.world.geodeCrackingRobots === 0) {
+    if (action.world.minutesLeft <= 1) {
       return;
     }
 
-   /**
-    * If we have no geode robots yet. Pretend we could magically build 1
-    * obsidian robot each turn hence, figure out how many turns it would take
-    * to give us enough obsidian to buy a geode robot. If we don't have that
-    * many minutes+1 (to create at least one geode), then kill this sub-tree.
-    */
-   if (action.world.obsidian < blueprint.obsidianCostForGeodeCrackingRobot) {
+  /**
+   * If we have no geode robots yet. Pretend we could magically build 1
+   * obsidian robot each turn hence, figure out how many turns it would take
+   * to give us enough obsidian to buy a geode robot. If we don't have that
+   * many minutes+1 (to create at least one geode), then kill this sub-tree.
+   */
+  if (action.world.obsidian < blueprint.obsidianCostForGeodeCrackingRobot) {
       const obsidianNeeded = blueprint.obsidianCostForGeodeCrackingRobot - action.world.obsidian;
       let futureObsidian = action.world.obsidianCollectingRobots;
       let minsNeeded = 0;
@@ -207,12 +249,14 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
 
   if (canDo(ActionType.WAIT, action.world, blueprint)
       && (action.world.minutesLeft > 2 || action.world.geodeCrackingRobots > 0)) {
+      // && (action.world.minutesLeft > 2)) {
     action.next.push({
       type: ActionType.WAIT,
       world: structuredClone(action.world),
       next: [],
       parent: action,
     });
+    nodesAtEachLevel[action.world.maxMinutes - action.world.minutesLeft - 1]++;
   }
 
   if (canDo(ActionType.BUILD_ORE_ROBOT, action.world, blueprint)
@@ -223,6 +267,7 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
       next: [],
       parent: action,
     });
+    nodesAtEachLevel[action.world.maxMinutes - action.world.minutesLeft - 1]++;
   }
   if (canDo(ActionType.BUILD_CLAY_ROBOT, action.world, blueprint)
       && !couldHaveBuiltClayRobotButDidNot
@@ -233,6 +278,7 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
       next: [],
       parent: action,
     });
+    nodesAtEachLevel[action.world.maxMinutes - action.world.minutesLeft - 1]++;
   }
 
   // Only build an obsidian robot if we can, if we did not wait last turn
@@ -248,6 +294,7 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
       next: [],
       parent: action,
     });
+    nodesAtEachLevel[action.world.maxMinutes - action.world.minutesLeft - 1]++;
   }
 
   // Only build a geode robot if we can, if we did not wait last turn instead
@@ -260,9 +307,11 @@ function doAction(action: ActionNode, blueprint: Blueprint) {
       next: [],
       parent: action,
     });
+    nodesAtEachLevel[action.world.maxMinutes - action.world.minutesLeft - 1]++;
   }
 
-  if (action.world.minutesLeft > 0) {
+  // If we have more minutes to evaluate, see what next actions should exist.
+  if (action.world.minutesLeft > action.world.maxMinutes - TEST_MINUTES) {
     for (const childAction of action.next) {
       doAction(childAction, blueprint);
     }
@@ -314,11 +363,25 @@ async function parseBlueprints(filename: string) {
   }
 }
 
+/**
+ * If the world has maxMinsLeft minutes left or less, the nodes will be printed.
+ */
 function printTree(action: ActionNode, maxMinsLeft = 0, indent: number = 0) {
+  if (indent === 0) {
+    console.log(`Stats:`);
+    for (let i = 0; i < nodesAtEachLevel.length; ++i) {
+      console.log(`  # of nodes ${i}: ${nodesAtEachLevel[i]}`);
+    }
+  }
+
   const indentStr = ' '.repeat(indent);
   if (action.world.minutesLeft <= maxMinsLeft) {
     console.log(`${indentStr}action: ${action.type}`);
-    console.log(`${indentStr}world: ${JSON.stringify(action.world, undefined, indent + 2)}`);
+    // console.log(`${indentStr}world: ${JSON.stringify(action.world, undefined, indent + 2)}`);
+    console.log(`${indentStr}world: ${action.world.minutesLeft}/${action.world.maxMinutes} ` +
+        `o:${action.world.ore}/c:${action.world.clay}/ob:${action.world.obsidian}/g:${action.world.geode} ` +
+        `or:${action.world.oreCollectingRobots}/cr:${action.world.clayCollectingRobots}/` +
+        `obr:${action.world.obsidianCollectingRobots}/gr:${action.world.geodeCrackingRobots},`);
     console.log(`${indentStr}next: [`);
   }
   if (action.next) {
@@ -332,6 +395,9 @@ function printTree(action: ActionNode, maxMinsLeft = 0, indent: number = 0) {
 }
 
 async function main1(filename: string) {
+  const maxMinutes = 24;
+  nodesAtEachLevel = new Array(maxMinutes).fill(0);
+
   await parseBlueprints(filename);
 
   let qualitySum = 0;
@@ -339,8 +405,9 @@ async function main1(filename: string) {
     const tree: ActionNode = {
       type: ActionType.START,
       world: {
-        minutesLeft: 24,
-      
+        minutesLeft: maxMinutes,
+        maxMinutes: maxMinutes,
+
         ore: 0,
         clay: 0,
         obsidian: 0,
@@ -377,4 +444,55 @@ async function main1(filename: string) {
   console.log(qualitySum);
 }
 
+async function main2(filename: string) {
+  const maxMinutes = 32;
+  nodesAtEachLevel = new Array(maxMinutes).fill(0);
+
+  await parseBlueprints(filename);
+
+  for (const blueprint of blueprints) {
+    const tree: ActionNode = {
+      type: ActionType.START,
+      world: {
+        minutesLeft: maxMinutes,
+        maxMinutes: maxMinutes,
+
+        ore: 0,
+        clay: 0,
+        obsidian: 0,
+        geode: 0,
+      
+        oreCollectingRobots: 1,
+        clayCollectingRobots: 0,
+        obsidianCollectingRobots: 0,
+        geodeCrackingRobots: 0,
+      },
+      next: [],
+    };
+
+    if (tree.world.maxMinutes < TEST_MINUTES) throw 'wut';
+
+    console.log(`Processing blueprint #${blueprint.index}...`);
+    doAction(tree, blueprint);
+    
+    if (blueprint.bestNode) {
+      const actions: ActionType[] = [];
+      let action = blueprint.bestNode;
+      while (action.parent) {
+        actions.push(action.type);
+        action = action.parent;
+      }
+      console.log(`${blueprint.index}: (${blueprint.maxGeodes})`);
+      actions.reverse();
+      for (let i = 0; i < actions.length; ++i) {
+        console.log(`  ${i+1}: ${actions[i]}`);
+      }
+    }
+    // printTree(tree, tree.world.maxMinutes);
+    printTree(tree, tree.world.maxMinutes - TEST_MINUTES);
+    break;
+  }
+}
+
 main1('input.txt');
+// main2('tiny.txt');
