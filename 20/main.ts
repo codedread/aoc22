@@ -40,7 +40,8 @@ function mixNumb(n: Numb, numbs: Numb[]) {
   let oldIndex = numbs.indexOf(n);
   if (oldIndex === -1) throw `wuh`;
 
-  let newIndex = oldIndex + n.val;
+  const move = (n.val % (N - 1));
+  let newIndex = oldIndex + move;
   // Even though it shouldn't matter, prefer negative-moving values to go at the
   // end of the list, not the beginning to match the AoC example.
   if (newIndex === 0 && n.val < 0) newIndex = N - 1;
@@ -74,4 +75,31 @@ async function main1(filename: string) {
   console.log(sum);
 }
 
-main1('input.txt');
+const DECRYPTION_KEY = 811589153;
+async function main2(filename: string) {
+  const numbs = (await createNumbs(filename))
+  numbs.forEach(n => n.val *= DECRYPTION_KEY);
+  const first: Numb|undefined = numbs[0];
+
+  for (let i = 0; i < 10; ++i) {
+    let n: Numb|undefined = first;
+    while (n) {
+      mixNumb(n, numbs);
+      n = n.originalNext;
+    }
+  }
+
+  const x = findNthValue(1000, numbs);
+  const y = findNthValue(2000, numbs);
+  const z = findNthValue(3000, numbs);
+
+  console.log(x);
+  console.log(y);
+  console.log(z);
+
+  let sum = x + y + z;
+  console.log(`sum = ${sum}`);
+}
+
+// main1('input.txt');
+main2('input.txt');
