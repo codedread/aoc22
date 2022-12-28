@@ -1,3 +1,5 @@
+type allowedOps = '+' | '-' | '*' | '/' | '=';
+
 interface Operation {
   /** Defined if deps is not defined. The number the monkey shouts. */
   num?: number;
@@ -11,6 +13,7 @@ class Monkey {
   constructor(public name: string, public operation: Operation) {}
 
   do(): number {
+    if (this.name === 'humn') throw 'brat';
     if (this.operation.num) return this.operation.num;
     if (!this.operation.deps) throw `buh`;
     if (!this.operation.op) throw 'bruh';
@@ -26,6 +29,64 @@ class Monkey {
       case '/': return monkeyA / monkeyB;
     }
     throw `bruuuuh!`;
+  }
+
+  has(dep: string): boolean {
+    if (this.name === dep) return true;
+    if (this.operation.num) return false;
+    if (!this.operation.deps) throw 'is this even possible?';
+    // Shortcut instead of looking for monkeys in the barrel.
+    if (this.operation.deps.includes(dep)) return true;
+    // Go searching in the barrel.
+    return (barrel.get(this.operation.deps[0])!.has(dep) ||
+        barrel.get(this.operation.deps[1])!.has(dep));
+  }
+
+  /**
+   * Returns what the human must yell such that this monkey's operation
+   * results in result.
+   */
+  match(result: number = 0): number {
+    if (!this.operation.deps) throw `Don't call match() on an end monkey, you chimp!`;
+    const depMonkeys: Monkey[] = [
+      barrel.get(this.operation.deps![0])!,
+      barrel.get(this.operation.deps![1])!,
+    ];
+    const humanDepNum = (depMonkeys[0].has(HUMAN_NAME) ? 0 : 1);
+    const val = depMonkeys[1 - humanDepNum].do();
+    let newResult: number;
+    switch (this.operation.op) {
+      case '=':
+        // val = human
+        newResult = val;
+        break;
+      case '+':
+        // val + human = result
+        newResult = result - val;
+        break;
+      case '-':
+        // val - human = result
+        if (humanDepNum === 1) newResult = val - result;
+        // human - val = result
+        else newResult = val + result;
+        break;
+      case '*':
+        // val * human = result
+        newResult = result / val;
+        break;
+      case '/':
+        // val / human = result
+        if (humanDepNum === 1) newResult = val / result;
+        // human / val = result
+        else newResult = val * result;
+        break;
+      default: throw 'wuzzup';
+    }
+
+    if (depMonkeys[humanDepNum].name === HUMAN_NAME) {
+      return newResult;
+    }
+    return depMonkeys[humanDepNum].match(newResult);
   }
 }
 
@@ -55,4 +116,17 @@ async function main1(filename: string) {
   console.log(`${barrel.get('root')!.do()}`)
 }
 
-main1('input.txt');
+const HUMAN_NAME = 'humn';
+
+async function main2(filename: string) {
+  await createBarrel(filename);
+  const root = barrel.get('root')!;
+  root.operation.op = '=';
+  if (root.operation.deps) {
+    console.log(root.match());
+  }
+  
+}
+
+// main1('input.txt');
+main2('input.txt');
