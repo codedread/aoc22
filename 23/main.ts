@@ -102,7 +102,10 @@ class Grid {
         && !this.elves.has(xyToString(x-1, y-0));
   }
 
-  processRound() {
+  /** Returns true if there were any elf moves. */
+  processRound(): boolean {
+    let moved = false;
+
     // A map from DESTINATION to SOURCE coordinates, both as strings.
     // (We use the destination as the key because we want a quick lookup to
     //  determine how many elves chose it).
@@ -140,6 +143,7 @@ class Grid {
         const srcStr = srcStrs[0];
         this.elves.delete(srcStr);
         this.elves.add(destStr);
+        moved = true;
       }
     }
 
@@ -147,6 +151,8 @@ class Grid {
     this.curDir++;
     if (this.curDir > 4) this.curDir = Direction.NORTH;
     this.curRound++;
+
+    return moved;
   }
 }
 
@@ -198,4 +204,13 @@ async function main1(filename: string) {
   console.log(g.getEmptyGroundTiles());
 }
 
-main1('input.txt');
+async function main2(filename: string) {
+  const g = await loadGrid(filename);
+  // printGrid(g);
+
+  while (g.processRound()) {}
+  console.log(g.curRound);
+}
+
+// main1('input.txt');
+main2('input.txt');
