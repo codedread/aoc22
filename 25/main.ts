@@ -1,37 +1,28 @@
 
 function toSNAFU(n: number): string {
-  // 1747 = (2 * 625) + (3 * 125) + (4 * 25) + (4 * 25) + 2
   const base5 = Number(n).toString(5);
   const base5digits = base5.split('').map(d => parseInt(d));
+  // Shove a 0 onto the front of the digits...
   base5digits.unshift(0);
-  // console.dir(base5digits);
   let s = '';
   for (let i = base5digits.length - 1; i >= 0; --i) {
     const ch = base5digits[i];
-    if (ch < 3) s = ch + s;
-    else if (ch === 3) {
-      s = '=' + s;
+    if (ch < 3) {
+      s = ch + s;
+    } else {
+      s = ((ch === 3) ? '=' : '-') + s;
+      // Increment the next higher digit.
       let j = i - 1;
       base5digits[j]++;
+      // Handle overflow.
       while (base5digits[j] > 4) {
         base5digits[j] -= 5;
         --j;
         base5digits[j]++;
       }
     }
-    else {
-      s = '-' + s;
-      let j = i - 1;
-      base5digits[j]++;
-      while (base5digits[j] > 4) {
-        base5digits[j] -= 5;
-        --j;
-        base5digits[j]++;
-      }
-    }
-    // console.dir(base5digits);
-    // console.log(s);
   }
+  // Get rid of any leading 0.
   if (s.charAt(0) === '0') {
     s = s.substring(1);
   }
