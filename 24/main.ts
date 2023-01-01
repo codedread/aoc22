@@ -17,13 +17,6 @@
   WEST = 4,
 }
 
-const Pointy = {
-  1: '^',
-  2: '>',
-  3: 'v',
-  4: '<',
-};
-
 interface Coord {
   x: number;
   y: number;
@@ -40,6 +33,24 @@ function coordToString(c: Coord): string {
 function stringToCoord(s: string) {
   const parts = s.split(',');
   return { x: parseInt(parts[0]), y: parseInt(parts[1]) };
+}
+
+enum Action {
+  START = 'START',
+  WAIT = 'wait',
+  MOVE_NORTH = 'move up',
+  MOVE_EAST = 'move right',
+  MOVE_SOUTH = 'move down',
+  MOVE_WEST = 'move left',
+}
+
+interface PathNode {
+  /** undefined for the root node. */
+  parent?: PathNode;
+  action: Action;
+  /** Location after the action was taken. */
+  loc: Coord;
+  children: PathNode[];
 }
 
 class Grid {
@@ -71,6 +82,9 @@ class Grid {
   northPointer: number;
   /** A pointer to the top-most edge of the south blizzards. */
   southPointer: number;
+
+  /** A map from minutes path to all path nodes at that minute. */
+  paths: Map<number, PathNode[]>;
 
   /** width and height are minus the walls. */
   constructor(public width: number, public height: number,
@@ -115,6 +129,15 @@ class Grid {
     this.eastPointer = 0;
     this.westPointer = 0;
     this.southPointer = 0;
+
+    const startPathNode: PathNode = {
+      action: Action.START,
+      loc: {...this.start},
+      parent: undefined,
+      children: [],
+    };
+    this.paths = new Map();
+    this.paths.set(0, [startPathNode]);
   }
 
   getPrintableCharacter(x: number, y: number): string {
@@ -142,8 +165,27 @@ class Grid {
     return '.';
   }
 
-  /** Moves the blizzards. */
-  advance() {
+  isEmpty(x: number, y: number): boolean {
+    if (x < 0 || x >= this.width) return false;
+    if (y < 0) return y === -1 && x === this.start.x;
+    if (y >= this.height) return y === this.height && x === this.finish.x;
+    const eastX = (x + this.eastPointer) % this.eastBlizzards[y].length;
+    const westX = (x + this.westPointer) % this.westBlizzards[y].length;
+    const northY = (y + this.northPointer) % this.northBlizzards[x].length;
+    const southY = (y + this.southPointer) % this.southBlizzards[x].length;
+    if (this.eastBlizzards[y][eastX]) return false;
+    if (this.westBlizzards[y][westX]) return false;
+    if (this.northBlizzards[x][northY]) return false;
+    if (this.southBlizzards[x][southY]) return false;
+
+    return true;
+  }
+
+  /**
+   * Moves the blizzards and picks new actions for the expedition to take.
+   * If paths to the exit are found, returns those paths.
+   */
+  advance(): PathNode[] {
     this.eastPointer--;
     if (this.eastPointer < 0) this.eastPointer = this.eastBlizzards[0].length - 1;
 
@@ -156,7 +198,103 @@ class Grid {
     this.westPointer++;
     if (this.westPointer >= this.westBlizzards[0].length) this.westPointer = 0;
 
+    // Now grow the paths...
+    const exitPaths: PathNode[] = [];
+    // A map from location to path node. This ensures only 1 path node at this
+    // level survives for each unique. location.
+    let allChildPaths: Map<string, PathNode> = new Map();
+    const allPaths = this.paths.get(this.mins)!;
     this.mins++;
+
+    for (const path of allPaths) {
+      const {x, y} = path.loc;
+
+      // Check north.
+      const c: Coord = { x: x, y: y - 1};
+      if (this.isEmpty(c.x, c.y) && !allChildPaths.has(coordToString(c))) { //} && x !== this.start.x && (y - 1) !== this.start.y) {
+        const newPath: PathNode = {
+          parent: path,
+          action: Action.MOVE_NORTH,
+          loc: { ...c },
+          children: [],
+        };
+        if (newPath.loc.x === this.finish.x && newPath.loc.y === this.finish.y) {
+          exitPaths.push(newPath);
+        }
+        path.children.push(newPath);
+        allChildPaths.set(coordToString(c), newPath);
+      }
+
+      // Check east.
+      c.x = x + 1; c.y = y;
+      if (this.isEmpty(c.x, c.y) && !allChildPaths.has(coordToString(c))) {
+        const newPath: PathNode = {
+          parent: path,
+          action: Action.MOVE_EAST,
+          loc: { ...c },
+          children: [],
+        };
+        if (newPath.loc.x === this.finish.x && newPath.loc.y === this.finish.y) {
+          exitPaths.push(newPath);
+        }
+        path.children.push(newPath);
+        allChildPaths.set(coordToString(c), newPath);
+      }
+      
+      // Check south.
+      c.x = x; c.y = y + 1;
+      if (this.isEmpty(c.x, c.y) && !allChildPaths.has(coordToString(c))) {
+        const newPath: PathNode = {
+          parent: path,
+          action: Action.MOVE_SOUTH,
+          loc: { ...c },
+          children: [],
+        };
+        if (newPath.loc.x === this.finish.x && newPath.loc.y === this.finish.y) {
+          exitPaths.push(newPath);
+        }
+        path.children.push(newPath);
+        allChildPaths.set(coordToString(c), newPath);
+      }
+
+      // Check west.
+      c.x = x - 1; c.y = y;
+      if (this.isEmpty(c.x, c.y) && !allChildPaths.has(coordToString(c))) {
+        const newPath: PathNode = {
+          parent: path,
+          action: Action.MOVE_WEST,
+          loc: { ...c },
+          children: [],
+        };
+        if (newPath.loc.x === this.finish.x && newPath.loc.y === this.finish.y) {
+          exitPaths.push(newPath);
+        }
+        path.children.push(newPath);
+        allChildPaths.set(coordToString(c), newPath);
+      }
+
+      // Since a blizzard did not land on us, we could wait...
+      c.x = x; c.y = y;
+      if (this.isEmpty(c.x, c.y) && !allChildPaths.has(coordToString(c))) {
+        const newPath: PathNode = {
+          parent: path,
+          action: Action.WAIT,
+          loc: { ...c },
+          children: [],
+        };
+        path.children.push(newPath);
+        allChildPaths.set(coordToString(c), newPath);
+      }
+    }
+
+    console.log(`At ${this.mins} minutes, we have ${allChildPaths.size} paths.`);
+    if (allChildPaths.size === 0) {
+      throw `ye hath failed`;
+    }
+
+    this.paths.set(this.mins, Array.from(allChildPaths.values()));
+
+    return exitPaths;
   }
 }
 
@@ -191,6 +329,7 @@ async function loadGrid(filename: string): Promise<Grid> {
 function printGrid(g: Grid) {
   console.clear();
   console.log(`Turn #${g.mins}, w=${g.width}, h=${g.height}`);
+  console.log(`# of child paths at min ${g.mins} = ${g.paths.get(g.mins)!.length}`);
   let topStr = '#';
   if (g.exp.x === g.start.x && g.exp.y === g.start.y) {
     topStr += 'E';
@@ -217,16 +356,30 @@ function printGrid(g: Grid) {
   console.log(bottomStr);
 }
 
-async function main1(filename: string) {
-  const g = await loadGrid(filename);
-  printGrid(g);
-
-  while (true) {
-    const buf = new Uint8Array(20);
-    await Deno.stdin.read(buf);
-    g.advance();
-    printGrid(g);
+function printPath(p: PathNode) {
+  const actions: Action[] = [];
+  let n: PathNode|undefined = p;
+  while (n) {
+    actions.push(n.action);
+    n = n.parent;
+  }
+  actions.reverse();
+  for (const action of actions) {
+    console.log(`action=${action}`);
   }
 }
 
-main1('tiny.txt');
+async function main1(filename: string) {
+  const g = await loadGrid(filename);
+
+  let endPaths;
+  while (true) {
+    endPaths = g.advance();
+    if (endPaths.length > 0) {
+      break;
+    }      
+  }
+  console.log(`Found ${endPaths.length} exits in ${g.mins} minutes`);
+}
+
+main1('input.txt');
