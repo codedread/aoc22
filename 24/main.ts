@@ -64,9 +64,9 @@ class Grid {
   readonly southBlizzards: boolean[][];
 
   /** The string representation of the start coord. */
-  readonly start: Coord;
+  start: Coord;
   /** The string representation of the finish coord. */
-  readonly finish: Coord;
+  finish: Coord;
 
   /** How many minutes have elapsed. */
   mins: number;
@@ -83,7 +83,7 @@ class Grid {
   /** A pointer to the top-most edge of the south blizzards. */
   southPointer: number;
 
-  /** A map from minutes path to all path nodes at that minute. */
+  /** A map from minutes to all path nodes at that minute. */
   paths: Map<number, PathNode[]>;
 
   /** width and height are minus the walls. */
@@ -120,24 +120,29 @@ class Grid {
       }
     }
 
-    this.start = { x: 0, y: -1 };
-    this.finish = { x: width - 1, y: height };
     this.mins = 0;
-
-    this.exp = {...this.start};
     this.northPointer = 0;
     this.eastPointer = 0;
     this.westPointer = 0;
     this.southPointer = 0;
 
+    this.paths = new Map();
+
+    this.setNewDestination({ x: 0, y: -1}, { x: width - 1, y: height});
+  }
+
+  setNewDestination(start: Coord, finish: Coord) {
+    this.start = {...start};
+    this.finish = {...finish};
+    this.exp = {...this.start};
     const startPathNode: PathNode = {
       action: Action.START,
       loc: {...this.start},
       parent: undefined,
       children: [],
     };
-    this.paths = new Map();
-    this.paths.set(0, [startPathNode]);
+    this.paths.set(this.mins, [startPathNode]);
+
   }
 
   getPrintableCharacter(x: number, y: number): string {
@@ -167,8 +172,10 @@ class Grid {
 
   isEmpty(x: number, y: number): boolean {
     if (x < 0 || x >= this.width) return false;
-    if (y < 0) return y === -1 && x === this.start.x;
-    if (y >= this.height) return y === this.height && x === this.finish.x;
+    if (y === this.start.y && x === this.start.x) return true;
+    if (y === this.finish.y && x === this.finish.x) return true;
+    if (y < 0) return false;
+    if (y >= this.height) return false;
     const eastX = (x + this.eastPointer) % this.eastBlizzards[y].length;
     const westX = (x + this.westPointer) % this.westBlizzards[y].length;
     const northY = (y + this.northPointer) % this.northBlizzards[x].length;
@@ -211,7 +218,7 @@ class Grid {
 
       // Check north.
       const c: Coord = { x: x, y: y - 1};
-      if (this.isEmpty(c.x, c.y) && !allChildPaths.has(coordToString(c))) { //} && x !== this.start.x && (y - 1) !== this.start.y) {
+      if (this.isEmpty(c.x, c.y) && !allChildPaths.has(coordToString(c))) {
         const newPath: PathNode = {
           parent: path,
           action: Action.MOVE_NORTH,
@@ -287,7 +294,6 @@ class Grid {
       }
     }
 
-    console.log(`At ${this.mins} minutes, we have ${allChildPaths.size} paths.`);
     if (allChildPaths.size === 0) {
       throw `ye hath failed`;
     }
@@ -337,7 +343,7 @@ function printGrid(g: Grid) {
     topStr += '.';
   }
   topStr += '#'.repeat(g.width);
-  console.dir(topStr);
+  console.log(topStr);
   for (let y = 0; y < g.height; ++y) {
     let rowStr = '#';
     for (let x = 0; x < g.width; ++x) {
@@ -382,4 +388,40 @@ async function main1(filename: string) {
   console.log(`Found ${endPaths.length} exits in ${g.mins} minutes`);
 }
 
-main1('input.txt');
+async function main2(filename: string) {
+  const g = await loadGrid(filename);
+
+  let endPaths;
+  while (true) {
+    endPaths = g.advance();
+    if (endPaths.length > 0) {
+      break;
+    }
+  }
+  console.log(g.mins);
+
+  // Go back to start.
+  g.setNewDestination(g.finish, g.start);
+  while (true) {
+    endPaths = g.advance();
+    if (endPaths.length > 0) {
+      break;
+    }
+  }
+  console.log(g.mins);
+
+  // Go back to finish again.
+  g.setNewDestination(g.finish, g.start);
+  while (true) {
+    endPaths = g.advance();
+    if (endPaths.length > 0) {
+      break;
+    }
+  }
+  console.log(g.mins);
+
+  console.log(`${g.mins} minutes`);
+}
+
+// main1('input.txt');
+main2('input.txt');
